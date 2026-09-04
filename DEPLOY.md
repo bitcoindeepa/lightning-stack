@@ -174,8 +174,8 @@ Set the rest per `.env.example`, in particular:
 | Variable | Value |
 |---|---|
 | `LND_REST_ENDPOINT` | `https://lnd.railway.internal:8080` |
-| `LND_REST_CERT` | TLS cert **hex** from 1.5 |
-| `LND_REST_MACAROON` | admin macaroon hex from 1.5 |
+| `LND_CERT_BASE64` | TLS cert **base64** from 1.5. **Not** `LND_REST_CERT` — see below |
+| `LND_REST_MACAROON` | admin macaroon **hex** from 1.5 |
 | `AUTH_SECRET_KEY` | the generated 64-hex value |
 | `LNBITS_BASEURL` | `https://pay.bitcoindeepa.com/` |
 | `LNBITS_ADMIN_UI` | `true` |
@@ -283,6 +283,19 @@ nothing is on the address the caller reaches. Everything in this stack must bind
 
 On Linux `[::]` also accepts IPv4, so it is strictly wider than `0.0.0.0`.
 This applies to Railway's TCP proxy too, so port 9735 needs it for inbound.
+
+**LNbits logs `Error initializing LndRestWallet: [Errno 36] File name too long`
+then `Fallback to VoidWallet`.**
+
+`LND_REST_CERT` is handed straight to httpx as `verify=`, which accepts a bool,
+an SSLContext, or a **path** — never certificate content. Hex or base64 in that
+variable is read as a filename.
+
+Do not set `LND_REST_CERT`. Set `LND_CERT_BASE64` instead; `lnbits/start.sh`
+decodes it to `/app/lnd-tls.cert` and points `LND_REST_CERT` at that file.
+
+The macaroon is different — `load_macaroon` accepts hex directly, so
+`LND_REST_MACAROON` takes the hex value as-is. Cert base64, macaroon hex.
 
 **Reissuing the TLS certificate** (after changing `tlsextradomain`, or on
 `self-signed certificate` / hostname-mismatch errors).
