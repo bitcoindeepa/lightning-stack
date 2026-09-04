@@ -82,9 +82,12 @@ Three things that will silently break the stack if changed:
   `lnd` service's actual `RAILWAY_PRIVATE_DOMAIN`. Railway locks that domain to
   the service's slug at creation time — renaming the service in the dashboard
   does NOT change it, so don't assume naming the service `lnd` gets you
-  `lnd.railway.internal`. This deployment's real domain is
-  `bitcoindeepa-lightning-stack.railway.internal` (service was created as
-  `Bitcoindeepa-Lightning-Stack`, later renamed to `lnd` — display name only).
+  `lnd.railway.internal`. This deployment's domain is now
+  `lnd.railway.internal`; it used to be
+  `bitcoindeepa-lightning-stack.railway.internal`, so `lnd.conf` lists both as
+  `tlsextradomain` entries. Note that changing `tlsextradomain` does NOT
+  regenerate an existing cert (`tlsautorefresh` is off) — you must delete
+  `/data/tls.cert`, restart, and re-dump credentials to both services.
 - `LNBITS_DATABASE_URL` must start with `postgres://`. Railway's
   `${{Postgres.DATABASE_URL}}` starts with `postgresql://` and LNbits refuses it,
   so the URL is assembled from `${{Postgres.PGUSER}}` etc. See DEPLOY.md.

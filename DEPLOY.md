@@ -17,11 +17,20 @@ existing Vercel site — the apex A record is not touched. See Phase 5.
 the service afterward does *not* change it.** Check the actual value (Railway
 dashboard → `lnd` service → Variables → `RAILWAY_PRIVATE_DOMAIN`, or
 `railway variable list --service lnd`) and set `tlsextradomain` in
-`lnd/lnd.conf` to match it before first boot. This deployment's actual domain
-is `bitcoindeepa-lightning-stack.railway.internal` (the service was originally
-created as `Bitcoindeepa-Lightning-Stack` and later renamed to `lnd`, which
-only changed the display name). Every `lnd.railway.internal` reference below
-must use whatever your real `RAILWAY_PRIVATE_DOMAIN` turns out to be.
+`lnd/lnd.conf` to match it before first boot.
+
+This deployment's domain is now **`lnd.railway.internal`**, which is what every
+reference below uses. It was previously
+`bitcoindeepa-lightning-stack.railway.internal` (the service was first created
+under that slug), so `lnd.conf` lists **both** as `tlsextradomain` entries —
+extra SANs are free, and a mismatch here surfaces as a confusing TLS hostname
+error in ThunderHub/LNbits rather than anything that mentions DNS.
+
+**Changing `tlsextradomain` does not regenerate an existing certificate.**
+`tlsautorefresh` is off on purpose, so LND keeps the `tls.cert` already on the
+volume. To pick up a new domain list you must delete `/data/tls.cert` and
+restart `lnd` — which invalidates the cert hex/base64 held by ThunderHub and
+LNbits, so redo the `PRINT_CREDS` dump (step 1.5) and update both services.
 
 ---
 
@@ -135,7 +144,7 @@ Variables on the `thunderhub` service:
 | `LND_MACAROON_HEX` | admin macaroon (hex) from 1.5 |
 | `LND_CERT_BASE64` | TLS cert (base64) from 1.5 |
 | `THUB_ACCOUNT_NAME` | `BitcoinDeepa` (optional) |
-| `LND_GRPC_HOST` | `bitcoindeepa-lightning-stack.railway.internal:10009` — **required**, no default. Must be the `lnd` service's real `RAILWAY_PRIVATE_DOMAIN`, matching `tlsextradomain`. |
+| `LND_GRPC_HOST` | `lnd.railway.internal:10009` — **required**, no default. Must be the `lnd` service's real `RAILWAY_PRIVATE_DOMAIN`, matching `tlsextradomain`. |
 
 `start.sh` writes `thubConfig.yaml` at boot from these. The macaroon is never
 committed and never baked into the image.
@@ -165,7 +174,7 @@ Set the rest per `.env.example`, in particular:
 
 | Variable | Value |
 |---|---|
-| `LND_REST_ENDPOINT` | `https://bitcoindeepa-lightning-stack.railway.internal:8080` |
+| `LND_REST_ENDPOINT` | `https://lnd.railway.internal:8080` |
 | `LND_REST_CERT` | TLS cert **hex** from 1.5 |
 | `LND_REST_MACAROON` | admin macaroon hex from 1.5 |
 | `AUTH_SECRET_KEY` | the generated 64-hex value |
