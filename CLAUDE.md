@@ -73,7 +73,11 @@ setup we control: reliable, cheap, self-custodial, and keeping ThunderHub + LNbi
 - `channel.backup` is auto-pushed to Telegram by `lnd/start.sh` on every change.
 - Pinned images: lnd `v0.21.3-beta`, lnbits `v1.6.0`, thunderhub `0.19.0`.
 
-Two things that will silently break the stack if changed:
+Three things that will silently break the stack if changed:
+- **Railway's private network is IPv6-only.** Every service must bind `[::]`,
+  never `0.0.0.0` — `0.0.0.0` is IPv4-only, so callers reaching the service over
+  `*.railway.internal` (an `fd12::/16` address) get ECONNREFUSED. This bit us on
+  LND's `rpclisten` once already.
 - LND's TLS cert `tlsextradomain` (in `lnd/lnd.conf`) must exactly match the
   `lnd` service's actual `RAILWAY_PRIVATE_DOMAIN`. Railway locks that domain to
   the service's slug at creation time — renaming the service in the dashboard

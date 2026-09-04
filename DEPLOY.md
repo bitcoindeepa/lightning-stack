@@ -262,6 +262,28 @@ You should get LNURL-pay JSON with a `callback` pointing at
 
 ---
 
+## Troubleshooting
+
+**`ECONNREFUSED fd12:...:10009` from ThunderHub or LNbits.**
+Railway's private network is **IPv6-only** — `lnd.railway.internal` resolves to
+an `fd12::/16` address. A service bound to `0.0.0.0` listens on IPv4 only, so
+nothing is on the address the caller reaches. Everything in this stack must bind
+`[::]`, never `0.0.0.0`:
+
+- `lnd.conf` → `listen` / `rpclisten` / `restlisten` all use `[::]`
+- LNbits → `LNBITS_HOST=::`
+
+On Linux `[::]` also accepts IPv4, so it is strictly wider than `0.0.0.0`.
+This applies to Railway's TCP proxy too, so port 9735 needs it for inbound.
+
+**`no such host` for the fee URL.** `fee.url` is required for Neutrino on
+mainnet and LND will not start without it. Note the key is `fee.url` under
+`[fee]` — the old top-level `feeurl` is deprecated. The response must be LND's
+own `{"fee_by_block_target": {...}}` shape, so a generic fee API will not work
+as a drop-in replacement.
+
+---
+
 ## Operational notes
 
 **The seed is the only backup of on-chain funds. `channel.backup` is the only
