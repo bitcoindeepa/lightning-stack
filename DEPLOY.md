@@ -135,7 +135,7 @@ Variables on the `thunderhub` service:
 | `LND_MACAROON_HEX` | admin macaroon (hex) from 1.5 |
 | `LND_CERT_BASE64` | TLS cert (base64) from 1.5 |
 | `THUB_ACCOUNT_NAME` | `BitcoinDeepa` (optional) |
-| `LND_GRPC_HOST` | `bitcoindeepa-lightning-stack.railway.internal:10009` (optional, this is the default) |
+| `LND_GRPC_HOST` | `bitcoindeepa-lightning-stack.railway.internal:10009` — **required**, no default. Must be the `lnd` service's real `RAILWAY_PRIVATE_DOMAIN`, matching `tlsextradomain`. |
 
 `start.sh` writes `thubConfig.yaml` at boot from these. The macaroon is never
 committed and never baked into the image.

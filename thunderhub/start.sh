@@ -8,14 +8,19 @@
 #   THUB_MASTER_PASSWORD  login password for the ThunderHub UI
 #   LND_MACAROON_HEX      ADMIN MACAROON (hex) from the LND credential dump
 #   LND_CERT_BASE64       TLS CERT (base64) from the LND credential dump
-#   LND_GRPC_HOST         defaults to lnd.railway.internal:10009
+#   LND_GRPC_HOST         "<lnd RAILWAY_PRIVATE_DOMAIN>:10009". Required, and
+#                         deliberately NOT defaulted: Railway locks the private
+#                         domain to the service slug at creation, so it is only
+#                         "lnd.railway.internal" if the service was CREATED with
+#                         that name. Guessing it produces a TLS hostname
+#                         mismatch that is tedious to diagnose.
 #   THUB_ACCOUNT_NAME     defaults to BitcoinDeepa
 
 set -e
 
 CONFIG="${ACCOUNT_CONFIG_PATH:-/tmp/thubConfig.yaml}"
 
-for v in THUB_MASTER_PASSWORD LND_MACAROON_HEX LND_CERT_BASE64; do
+for v in THUB_MASTER_PASSWORD LND_MACAROON_HEX LND_CERT_BASE64 LND_GRPC_HOST; do
   eval "val=\$$v"
   if [ -z "$val" ]; then
     echo "[start.sh] FATAL: $v is not set. Set it in Railway and redeploy." >&2
@@ -30,7 +35,7 @@ masterPassword: '$THUB_MASTER_PASSWORD'
 
 accounts:
   - name: '${THUB_ACCOUNT_NAME:-BitcoinDeepa}'
-    serverUrl: '${LND_GRPC_HOST:-lnd.railway.internal:10009}'
+    serverUrl: '$LND_GRPC_HOST'
     macaroon: '$LND_MACAROON_HEX'
     certificate: '$LND_CERT_BASE64'
 EOF
