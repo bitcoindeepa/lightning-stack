@@ -1,44 +1,116 @@
 #!/bin/sh
 # Entrypoint for LND on Railway.
-# - Writes the wallet-unlock password file (for auto-unlock) if WALLET_PASSWORD is set.
-# - Optionally dumps TLS cert + admin macaroon as hex AND base64 to the logs,
-#   so you can wire up ThunderHub and LNbits (Railway services can't share files).
+#
+#   1) Writes the wallet-unlock password file from the WALLET_PASSWORD secret.
+#   2) Watches channel.backup (SCB) and pushes it to Telegram whenever it changes.
+#   3) Optionally dumps TLS cert + admin macaroon to the logs, so ThunderHub and
+#      LNbits can be wired up (Railway services cannot share files).
+#   4) Starts LND.
+#
+# Env vars (set in Railway, never in this repo):
+#   WALLET_PASSWORD       required. Unlocks the wallet on every restart.
+#   ALLOW_WALLET_CREATE   Phase 1 only. "1" lets you create the wallet over REST.
+#   LND_EXTERNAL_ADDR     "host:port" of the Railway TCP proxy for port 9735.
+#   TELEGRAM_BOT_TOKEN    channel backup destination.
+#   TELEGRAM_CHAT_ID      channel backup destination.
+#   PRINT_CREDS           "1" dumps credentials to the logs once, then remove it.
 
 set -e
 
-# 1) Auto-unlock: write the password file from a Railway secret (never commit it).
+LNDDIR=/data
+CHAINDIR="$LNDDIR/data/chain/bitcoin/mainnet"
+SCB="$CHAINDIR/channel.backup"
+
+# --- 1) Auto-unlock --------------------------------------------------------
 if [ -n "$WALLET_PASSWORD" ]; then
-  printf '%s' "$WALLET_PASSWORD" > /data/walletpassword.txt
-  echo "[start.sh] wrote /data/walletpassword.txt for auto-unlock"
+  printf '%s' "$WALLET_PASSWORD" > "$LNDDIR/walletpassword.txt"
+  chmod 600 "$LNDDIR/walletpassword.txt"
+  echo "[start.sh] wrote walletpassword.txt for auto-unlock"
+else
+  echo "[start.sh] WARNING: WALLET_PASSWORD is not set. LND will not auto-unlock."
 fi
 
-# 2) Credential dump: set PRINT_CREDS=1 in Railway, redeploy, copy from logs,
-#    then REMOVE the variable. Only works after the wallet has been created.
+# --- 2) Channel backup watcher --------------------------------------------
+# channel.backup is the ONLY way to recover channel funds if this volume dies.
+# LND rewrites it on every channel open/close, so we ship each new version out.
+tg_send_backup() {
+  reason="$1"
+  curl -s -o /dev/null -w '[start.sh] telegram HTTP %{http_code}\n' \
+    -F "chat_id=$TELEGRAM_CHAT_ID" \
+    -F "caption=BitcoinDeepa LND channel.backup ($reason) - $(date -u '+%Y-%m-%d %H:%M UTC')" \
+    -F "document=@$SCB;filename=channel.backup" \
+    "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument" \
+    || echo "[start.sh] telegram push failed"
+}
+
+watch_scb() {
+  last=""
+  while true; do
+    if [ -f "$SCB" ]; then
+      now=$(sha256sum "$SCB" | cut -d' ' -f1)
+      if [ "$now" != "$last" ]; then
+        if [ -z "$last" ]; then reason="startup"; else reason="channel change"; fi
+        echo "[start.sh] channel.backup changed ($reason), pushing to Telegram"
+        tg_send_backup "$reason"
+        last="$now"
+      fi
+    fi
+    sleep 30
+  done
+}
+
+if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+  if command -v curl >/dev/null 2>&1; then
+    watch_scb &
+    echo "[start.sh] channel.backup watcher started (Telegram)"
+  else
+    echo "[start.sh] WARNING: curl missing, channel backups will NOT be pushed"
+  fi
+else
+  echo "[start.sh] WARNING: TELEGRAM_* not set, channel backups will NOT be pushed"
+fi
+
+# --- 3) Credential dump ----------------------------------------------------
+# Set PRINT_CREDS=1 in Railway, redeploy, copy from the logs, then REMOVE the
+# variable and redeploy again. Only works once the wallet exists.
 if [ "$PRINT_CREDS" = "1" ]; then
-  CERT=/data/tls.cert
-  MAC=/data/data/chain/bitcoin/mainnet/admin.macaroon
+  CERT="$LNDDIR/tls.cert"
+  MAC="$CHAINDIR/admin.macaroon"
 
   to_hex() {
-    # Try several tools; one of them should exist in the image.
     hexdump -ve '1/1 "%.2x"' "$1" 2>/dev/null \
       || xxd -ps -c 100000 "$1" 2>/dev/null | tr -d '\n' \
       || od -An -tx1 "$1" 2>/dev/null | tr -d ' \n'
   }
 
-  echo "========== TLS CERT (hex) =========="
+  echo "========== TLS CERT (hex)  -> LNbits LND_REST_CERT =========="
   to_hex "$CERT" || echo "(tls.cert not found yet)"
   echo ""
-  echo "========== TLS CERT (base64) =========="
+  echo "========== TLS CERT (base64) -> ThunderHub LND_CERT_BASE64 =========="
   base64 "$CERT" 2>/dev/null | tr -d '\n' || echo "(base64 unavailable)"
   echo ""
-  echo "========== ADMIN MACAROON (hex) =========="
+  echo "========== ADMIN MACAROON (hex) -> both LNbits + ThunderHub =========="
   to_hex "$MAC" || echo "(admin.macaroon not found yet)"
   echo ""
-  echo "========== ADMIN MACAROON (base64) =========="
-  base64 "$MAC" 2>/dev/null | tr -d '\n' || echo "(base64 unavailable)"
-  echo ""
-  echo "========== END CREDS =========="
+  echo "========== END CREDS - now REMOVE PRINT_CREDS =========="
 fi
 
-# 3) Start LND. Data (wallet, channels, neutrino, tls, macaroons) lives on /data.
-exec lnd --lnddir=/data --configfile=/app/lnd.conf
+# --- 4) Start LND ----------------------------------------------------------
+set -- lnd --lnddir="$LNDDIR" --configfile=/app/lnd.conf
+
+# Advertise the Railway TCP proxy so other nodes can open channels TO us.
+# The proxy port differs from 9735, so this must be host:port, not just a host.
+if [ -n "$LND_EXTERNAL_ADDR" ]; then
+  echo "[start.sh] advertising external address $LND_EXTERNAL_ADDR"
+  set -- "$@" --externalip="$LND_EXTERNAL_ADDR"
+fi
+
+# Phase 1 only: lets LND boot with the password file set but no wallet yet, so
+# the wallet can be created over REST. The creation RPC is UNAUTHENTICATED while
+# this is on - remove the variable as soon as the wallet exists.
+if [ "$ALLOW_WALLET_CREATE" = "1" ]; then
+  echo "[start.sh] !! ALLOW_WALLET_CREATE=1 - wallet creation RPC is OPEN. Phase 1 only."
+  set -- "$@" --wallet-unlock-allow-create
+fi
+
+exec "$@"

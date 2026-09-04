@@ -1,11 +1,17 @@
 # LND (Neutrino) for Railway
-# Check the latest stable tag: https://github.com/lightningnetwork/lnd/releases
-FROM lightninglabs/lnd:v0.18.5-beta
+# Latest stable: https://github.com/lightningnetwork/lnd/releases
+FROM lightninglabs/lnd:v0.21.3-beta
 
-# Keep config + start script OUTSIDE /data, because Railway's persistent volume
-# mounts at /data and hides anything baked into that path.
+# curl is used by start.sh to push channel.backup to Telegram.
+USER root
+RUN apk add --no-cache curl
+
+# Keep config + start script OUTSIDE /data: Railway's persistent volume mounts
+# at /data and hides anything baked into that path.
 COPY lnd.conf /app/lnd.conf
 COPY start.sh /app/start.sh
 
-# Use sh explicitly so we don't depend on the execute bit being set.
+EXPOSE 9735 10009 8080
+
+# Use sh explicitly so we don't depend on the execute bit surviving Git on Windows.
 ENTRYPOINT ["/bin/sh", "/app/start.sh"]

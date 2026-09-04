@@ -1,32 +1,56 @@
 #!/bin/sh
-# Run this from YOUR OWN computer (not on Railway) during Phase 1, after LND is
-# deployed and a TCP Proxy is pointed at LND's REST port 8080.
+# Phase 1 wallet creation. Run this from YOUR OWN computer, never on Railway.
+#
+# Everything is read from the environment so that no seed, password or proxy
+# host is ever written into a file that git could pick up.
+#
+# Prerequisites:
+#   - LND deployed, with ALLOW_WALLET_CREATE=1 set on the Railway service.
+#   - A Railway TCP Proxy pointed at LND's REST port 8080.
 #
 # Usage:
-#   1) Edit PROXY below to your Railway TCP proxy host:port for port 8080.
-#   2) ./create-wallet.sh genseed        -> prints your 24-word seed. WRITE IT DOWN.
-#   3) Put the 24 words into SEED_WORDS below and set a password.
-#   4) ./create-wallet.sh initwallet     -> creates + unlocks the wallet.
+#   export LND_PROXY="something.proxy.rlwy.net:23456"
+#   ./create-wallet.sh genseed          # prints the 24 words - WRITE THEM DOWN
+#
+#   export WALLET_PASSWORD="the same value you put in Railway"
+#   export SEED_WORDS='["word1","word2", ... ,"word24"]'
+#   ./create-wallet.sh initwallet       # creates + unlocks the wallet
+#
+# -k is used on purpose: LND's self-signed cert does not cover the proxy host.
 
-PROXY="YOUR_PROXY_HOST:PORT"          # e.g. something.proxy.rlwy.net:23456
-WALLET_PASSWORD="your-strong-password"
-# After genseed, paste the 24 words here as a JSON array:
-SEED_WORDS='["word1","word2","word3","...","word24"]'
+set -e
+
+: "${LND_PROXY:?set LND_PROXY to your Railway TCP proxy host:port for port 8080}"
 
 case "$1" in
   genseed)
-    curl -k "https://$PROXY/v1/genseed"
+    curl -k -sS "https://$LND_PROXY/v1/genseed"
     echo ""
-    echo ">> Copy cipher_seed_mnemonic (24 words) and store them safely."
+    echo ""
+    echo ">> Copy cipher_seed_mnemonic - all 24 words, in order."
+    echo ">> Write them on paper. This is the ONLY backup of your funds."
+    echo ">> Do not screenshot, do not put them in a password manager sync, do"
+    echo ">> not paste them into a chat. Then export SEED_WORDS and run initwallet."
     ;;
+
   initwallet)
-    PW_B64=$(printf '%s' "$WALLET_PASSWORD" | base64)
-    curl -k -X POST "https://$PROXY/v1/initwallet" \
-      -d "{\"wallet_password\": \"$PW_B64\", \"cipher_seed_mnemonic\": $SEED_WORDS}"
+    : "${WALLET_PASSWORD:?set WALLET_PASSWORD - must match the Railway secret exactly}"
+    : "${SEED_WORDS:?set SEED_WORDS to the 24 words as a JSON array}"
+
+    PW_B64=$(printf '%s' "$WALLET_PASSWORD" | base64 | tr -d '\n')
+    curl -k -sS -X POST "https://$LND_PROXY/v1/initwallet" \
+      -H 'Content-Type: application/json' \
+      -d "{\"wallet_password\":\"$PW_B64\",\"cipher_seed_mnemonic\":$SEED_WORDS}"
     echo ""
-    echo ">> Wallet created + unlocked. Watch Railway logs for Neutrino sync."
+    echo ""
+    echo ">> Wallet created and unlocked."
+    echo ">> NOW, in Railway: delete ALLOW_WALLET_CREATE and redeploy."
+    echo ">> Leaving it set keeps an unauthenticated wallet-creation RPC exposed."
+    echo ">> Then watch the logs for Neutrino sync progress."
     ;;
+
   *)
-    echo "Usage: $0 genseed | initwallet"
+    echo "Usage: LND_PROXY=host:port $0 genseed | initwallet"
+    exit 1
     ;;
 esac

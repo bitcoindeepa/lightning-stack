@@ -49,20 +49,45 @@ setup we control: reliable, cheap, self-custodial, and keeping ThunderHub + LNbi
 
 ## Repo layout
 
-- `lnd/`         Dockerfile + lnd.conf + start.sh (the node)
-- `thunderhub/`  Dockerfile + thubConfig.yaml (management UI)
-- `lnbits/`      .env.example (wallet/API layer)
+- `lnd/`         Dockerfile + lnd.conf + start.sh + railway.json (the node)
+- `thunderhub/`  Dockerfile + start.sh + railway.json (management UI). start.sh
+                 generates thubConfig.yaml at boot from env vars, so the admin
+                 macaroon is never committed or baked into the image.
+- `lnbits/`      Dockerfile + .env.example + railway.json (wallet/API layer)
 - `scripts/`     create-wallet.sh (Phase 1 helper, run from your laptop)
-- `README.md`    full step-by-step deployment guide (4 phases)
+- `DEPLOY.md`    the production runbook — follow this to deploy
+- `README.md`    background + original step-by-step guide
 - `MIGRATION.md` how to move funds/channels off Voltage onto this node
 - `SECURITY.md`  how to expose/lock down each service safely
 
+## Production configuration (decided 2026-09-04)
+
+- Node alias `BitcoinDeepa ⚡`, color `#F7931A`, mainnet Neutrino.
+- Forwarding policy: 1 sat base + 200 ppm, `minchansize` 100k sats, no autopilot.
+- Inbound enabled: Railway TCP Proxy on 9735, advertised via `LND_EXTERNAL_ADDR`.
+- LNbits on Railway Postgres (NOT SQLite), `LndRestWallet` backend.
+- ThunderHub at `node.bitcoindeepa.com`, LNbits at `pay.bitcoindeepa.com`.
+- Lightning Addresses are `you@bitcoindeepa.com`: the apex A record stays with
+  the existing Vercel site, which rewrites only `/.well-known/lnurlp/*` to
+  `pay.bitcoindeepa.com`. Nothing about the website changes otherwise.
+- `channel.backup` is auto-pushed to Telegram by `lnd/start.sh` on every change.
+- Pinned images: lnd `v0.21.3-beta`, lnbits `v1.6.0`, thunderhub `0.19.0`.
+
+Two things that will silently break the stack if changed:
+- The LND service must be named exactly `lnd` — the TLS cert is issued for
+  `lnd.railway.internal` and nothing else.
+- `LNBITS_DATABASE_URL` must start with `postgres://`. Railway's
+  `${{Postgres.DATABASE_URL}}` starts with `postgresql://` and LNbits refuses it,
+  so the URL is assembled from `${{Postgres.PGUSER}}` etc. See DEPLOY.md.
+
 ## Current status / next steps
 
-- [ ] Phase 1: Deploy LND, create wallet, SAVE SEED, sync, enable auto-unlock
+- [x] Phase 0: Stack configured for production (this repo)
+- [ ] Phase 1: Deploy LND, create wallet, SAVE SEED, sync, close creation RPC
 - [ ] Phase 2: Deploy ThunderHub (hex macaroon + base64 cert)
-- [ ] Phase 3: Deploy LNbits (hex macaroon + hex cert, REST backend)
-- [ ] Phase 4: TCP proxy for 9735, lock down access, fund, open channels
+- [ ] Phase 3: Deploy Postgres + LNbits (hex macaroon + hex cert, REST backend)
+- [ ] Phase 4: Custom domains + Vercel apex rewrite for Lightning Addresses
+- [ ] Phase 5: Fund, open channels, VERIFY the Telegram backup fires
 - [ ] Migration: close Voltage channels, move funds, reopen here (see MIGRATION.md)
 
 ## Golden rules
