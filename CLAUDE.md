@@ -74,8 +74,13 @@ setup we control: reliable, cheap, self-custodial, and keeping ThunderHub + LNbi
 - Pinned images: lnd `v0.21.3-beta`, lnbits `v1.6.0`, thunderhub `0.19.0`.
 
 Two things that will silently break the stack if changed:
-- The LND service must be named exactly `lnd` — the TLS cert is issued for
-  `lnd.railway.internal` and nothing else.
+- LND's TLS cert `tlsextradomain` (in `lnd/lnd.conf`) must exactly match the
+  `lnd` service's actual `RAILWAY_PRIVATE_DOMAIN`. Railway locks that domain to
+  the service's slug at creation time — renaming the service in the dashboard
+  does NOT change it, so don't assume naming the service `lnd` gets you
+  `lnd.railway.internal`. This deployment's real domain is
+  `bitcoindeepa-lightning-stack.railway.internal` (service was created as
+  `Bitcoindeepa-Lightning-Stack`, later renamed to `lnd` — display name only).
 - `LNBITS_DATABASE_URL` must start with `postgres://`. Railway's
   `${{Postgres.DATABASE_URL}}` starts with `postgresql://` and LNbits refuses it,
   so the URL is assembled from `${{Postgres.PGUSER}}` etc. See DEPLOY.md.
@@ -83,7 +88,7 @@ Two things that will silently break the stack if changed:
 ## Current status / next steps
 
 - [x] Phase 0: Stack configured for production (this repo)
-- [ ] Phase 1: Deploy LND, create wallet, SAVE SEED, sync, close creation RPC
+- [x] Phase 1: Deploy LND, create wallet, SAVE SEED, sync, close creation RPC
 - [ ] Phase 2: Deploy ThunderHub (hex macaroon + base64 cert)
 - [ ] Phase 3: Deploy Postgres + LNbits (hex macaroon + hex cert, REST backend)
 - [ ] Phase 4: Custom domains + Vercel apex rewrite for Lightning Addresses

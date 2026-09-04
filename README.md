@@ -30,8 +30,11 @@ or point Railway at this repo's `lnd/` directory. Edit `lnd.conf` -> set `alias`
 
 ### 1.2 Create the Railway service
 - New project -> Deploy from GitHub repo.
-- **Name the service `lnd`** (so its private address is `lnd.railway.internal`,
-  matching `tlsextradomain` in `lnd.conf`).
+- Naming the service `lnd` does **not** guarantee its private address is
+  `lnd.railway.internal` — Railway locks `RAILWAY_PRIVATE_DOMAIN` to the
+  service's slug at creation time and does not update it on rename. After
+  creating the service, check its actual `RAILWAY_PRIVATE_DOMAIN` and set
+  `tlsextradomain` in `lnd.conf` to match that value exactly. See DEPLOY.md.
 - Add a **Volume**, mount path **`/data`**.
 - Deploy. In the logs LND will start and WAIT ("waiting for wallet") - expected.
 
@@ -81,8 +84,9 @@ Watch the logs until LND reports **synced to chain** (minutes to ~1 hour).
 - In `thunderhub/thubConfig.yaml`, set `masterPassword`, and paste the
   `macaroon` (hex) and `certificate` (base64).
 - Push `thunderhub/` to a repo (or this repo's `thunderhub/` dir).
-- New Railway service from that repo. It talks to `lnd.railway.internal:10009`
-  over the private network.
+- New Railway service from that repo. It talks to the `lnd` service's
+  `RAILWAY_PRIVATE_DOMAIN` on port `10009` over the private network — see the
+  note in Phase 1 above about that value not always being `lnd.railway.internal`.
 - Give it a **public domain** (ThunderHub listens on port 3000). Log in with your
   masterPassword.
 

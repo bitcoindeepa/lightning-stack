@@ -12,9 +12,16 @@ The configured target. Follow the phases in order; each one depends on the last.
 Lightning Addresses resolve as `you@bitcoindeepa.com` via a rewrite on the
 existing Vercel site — the apex A record is not touched. See Phase 5.
 
-**Service names matter.** LND's TLS certificate is issued for
-`lnd.railway.internal`, so the LND service must be named exactly `lnd`.
-Rename it and ThunderHub/LNbits will fail TLS with a hostname mismatch.
+**Service names don't control the internal hostname — Railway locks
+`RAILWAY_PRIVATE_DOMAIN` to the service's slug at creation time, and renaming
+the service afterward does *not* change it.** Check the actual value (Railway
+dashboard → `lnd` service → Variables → `RAILWAY_PRIVATE_DOMAIN`, or
+`railway variable list --service lnd`) and set `tlsextradomain` in
+`lnd/lnd.conf` to match it before first boot. This deployment's actual domain
+is `bitcoindeepa-lightning-stack.railway.internal` (the service was originally
+created as `Bitcoindeepa-Lightning-Stack` and later renamed to `lnd`, which
+only changed the display name). Every `lnd.railway.internal` reference below
+must use whatever your real `RAILWAY_PRIVATE_DOMAIN` turns out to be.
 
 ---
 
@@ -128,7 +135,7 @@ Variables on the `thunderhub` service:
 | `LND_MACAROON_HEX` | admin macaroon (hex) from 1.5 |
 | `LND_CERT_BASE64` | TLS cert (base64) from 1.5 |
 | `THUB_ACCOUNT_NAME` | `BitcoinDeepa` (optional) |
-| `LND_GRPC_HOST` | `lnd.railway.internal:10009` (optional, this is the default) |
+| `LND_GRPC_HOST` | `bitcoindeepa-lightning-stack.railway.internal:10009` (optional, this is the default) |
 
 `start.sh` writes `thubConfig.yaml` at boot from these. The macaroon is never
 committed and never baked into the image.
@@ -158,7 +165,7 @@ Set the rest per `.env.example`, in particular:
 
 | Variable | Value |
 |---|---|
-| `LND_REST_ENDPOINT` | `https://lnd.railway.internal:8080` |
+| `LND_REST_ENDPOINT` | `https://bitcoindeepa-lightning-stack.railway.internal:8080` |
 | `LND_REST_CERT` | TLS cert **hex** from 1.5 |
 | `LND_REST_MACAROON` | admin macaroon hex from 1.5 |
 | `AUTH_SECRET_KEY` | the generated 64-hex value |
