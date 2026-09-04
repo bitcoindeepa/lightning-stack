@@ -28,9 +28,8 @@ error in ThunderHub/LNbits rather than anything that mentions DNS.
 
 **Changing `tlsextradomain` does not regenerate an existing certificate.**
 `tlsautorefresh` is off on purpose, so LND keeps the `tls.cert` already on the
-volume. To pick up a new domain list you must delete `/data/tls.cert` and
-restart `lnd` — which invalidates the cert hex/base64 held by ThunderHub and
-LNbits, so redo the `PRINT_CREDS` dump (step 1.5) and update both services.
+volume and ignores the new domain list. See "Reissuing the TLS certificate"
+under Troubleshooting.
 
 ---
 
@@ -284,6 +283,28 @@ nothing is on the address the caller reaches. Everything in this stack must bind
 
 On Linux `[::]` also accepts IPv4, so it is strictly wider than `0.0.0.0`.
 This applies to Railway's TCP proxy too, so port 9735 needs it for inbound.
+
+**Reissuing the TLS certificate** (after changing `tlsextradomain`, or on
+`self-signed certificate` / hostname-mismatch errors).
+
+Railway gives you no shell, so `lnd/start.sh` has a one-shot flag:
+
+1. On `lnd`, set `REGEN_TLS=1` and redeploy. The log shows
+   `deleting tls.cert/tls.key so LND reissues them`.
+2. **Remove `REGEN_TLS`**, set `PRINT_CREDS=1`, redeploy. Copy the new cert.
+3. Update `LND_CERT_BASE64` on `thunderhub` and `LND_REST_CERT` on `lnbits`.
+   The macaroon does not change.
+4. Remove `PRINT_CREDS`, redeploy.
+
+Leaving `REGEN_TLS` set issues a brand new cert on **every** restart, which
+breaks both services again each time.
+
+Distinguishing the two TLS failures:
+
+| Error | Meaning |
+|---|---|
+| `self-signed certificate` | The cert the service holds is not the one LND serves. Stale value — reissue and re-dump. |
+| `Hostname/IP does not match certificate's altnames` | Cert is current, but does not cover the hostname being dialled. Add it to `tlsextradomain`, then reissue. |
 
 **`no such host` for the fee URL.** `fee.url` is required for Neutrino on
 mainnet and LND will not start without it. Note the key is `fee.url` under

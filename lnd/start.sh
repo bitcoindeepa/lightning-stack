@@ -10,6 +10,9 @@
 # Env vars (set in Railway, never in this repo):
 #   WALLET_PASSWORD       required. Unlocks the wallet on every restart.
 #   ALLOW_WALLET_CREATE   Phase 1 only. "1" lets you create the wallet over REST.
+#   REGEN_TLS             "1" deletes tls.cert/tls.key on boot so LND reissues
+#                         them. Needed after changing tlsextradomain. Remove it
+#                         again straight after, and re-dump PRINT_CREDS.
 #   LND_EXTERNAL_ADDR     "host:port" of the Railway TCP proxy for port 9735.
 #   TELEGRAM_BOT_TOKEN    channel backup destination.
 #   TELEGRAM_CHAT_ID      channel backup destination.
@@ -28,6 +31,24 @@ if [ -n "$WALLET_PASSWORD" ]; then
   echo "[start.sh] wrote walletpassword.txt for auto-unlock"
 else
   echo "[start.sh] WARNING: WALLET_PASSWORD is not set. LND will not auto-unlock."
+fi
+
+# --- 1b) One-shot TLS regeneration ----------------------------------------
+# tlsautorefresh is off, so LND reuses whatever tls.cert is already on the
+# volume and IGNORES changes to tlsextradomain. Set REGEN_TLS=1 to delete the
+# cert and key so LND issues a fresh pair covering the current domain list.
+#
+# This does NOT touch the wallet, channels or macaroons - only the TLS pair.
+# But it DOES invalidate the cert hex/base64 held by ThunderHub and LNbits, so
+# afterwards re-run with PRINT_CREDS=1 and update both services.
+#
+# Remove the variable once done, or every restart issues a new cert and both
+# services break again.
+if [ "$REGEN_TLS" = "1" ]; then
+  echo "[start.sh] REGEN_TLS=1 - deleting tls.cert/tls.key so LND reissues them"
+  rm -f "$LNDDIR/tls.cert" "$LNDDIR/tls.key"
+  echo "[start.sh] !! ThunderHub and LNbits now hold a STALE cert."
+  echo "[start.sh] !! Redeploy with PRINT_CREDS=1 and update both, then REMOVE REGEN_TLS."
 fi
 
 # --- 2) Channel backup watcher --------------------------------------------
