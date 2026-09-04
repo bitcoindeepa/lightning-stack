@@ -1,0 +1,12 @@
+# Set a strong masterPassword - this is the login for the ThunderHub UI.
+masterPassword: 'CHANGE_ME_STRONG_PASSWORD'
+
+accounts:
+  - name: 'MyNode'
+    # Railway private hostname of the LND service (service must be named "lnd").
+    serverUrl: 'lnd.railway.internal:10009'
+    # Paste values from the LND credential dump (start.sh PRINT_CREDS=1):
+    #   macaroon    = ADMIN MACAROON (hex)
+    #   certificate = TLS CERT (base64)
+    macaroon: 'PASTE_ADMIN_MACAROON_HEX'
+    certificate: 'PASTE_TLS_CERT_BASE64'

@@ -1,0 +1,9 @@
+# NEVER commit secrets
+.env
+*.env
+!*.env.example
+walletpassword.txt
+*seed*
+*.macaroon
+tls.cert
+tls.key
