@@ -37,12 +37,33 @@ The admin macaroon can open and close channels and spend the on-chain wallet.
 Neither service needs that much, and LNbits — public domain, public
 registration, biggest attack surface — needs very little.
 
-Run `scripts/bake-macaroons.sh` in the `lnd` container console. It bakes:
+Run these in the `lnd` container console (Railway → `lnd` → Console).
 
-- **LNbits**: `invoices:read/write` + `offchain:read/write`. Cannot touch
-  on-chain funds, cannot close channels.
-- **ThunderHub**: channel management, but without `macaroon:generate` or
-  `onchain:write`.
+`--rpcserver=[::1]:10009` is required: LND binds the IPv6 wildcard and this
+container enforces IPv6-only on that socket, so `lncli`'s default IPv4
+`127.0.0.1` is refused. The same applies to every other `lncli` command.
+
+**LNbits** — derived from the only endpoints `lnbits/wallets/lndrest.py` calls
+(`/v1/balance/channels`, `/v1/invoices*`, `/v2/invoices/*`, `/v2/router/*`).
+Cannot spend on-chain, cannot close channels:
+
+```sh
+lncli --lnddir=/data --rpcserver=[::1]:10009 bakemacaroon \
+  invoices:read invoices:write offchain:read offchain:write
+```
+
+**ThunderHub** — needs channel management, but not `macaroon:generate` (cannot
+mint further macaroons) or `onchain:write` (cannot send your on-chain funds):
+
+```sh
+lncli --lnddir=/data --rpcserver=[::1]:10009 bakemacaroon \
+  info:read onchain:read offchain:read offchain:write \
+  invoices:read invoices:write address:read address:write \
+  peers:read peers:write signer:read
+```
+
+Each prints `{ "macaroon": "<hex>" }`. Put the hex in `LND_REST_MACAROON`
+(lnbits) and `LND_MACAROON_HEX` (thunderhub), then redeploy both.
 
 After swapping both services over, the admin macaroon should exist only on the
 volume — held by no service, pasted into no variable.
