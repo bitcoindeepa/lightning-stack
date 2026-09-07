@@ -3,9 +3,10 @@
 #
 #   1) Writes the wallet-unlock password file from the WALLET_PASSWORD secret.
 #   2) Watches channel.backup (SCB) and pushes it to Telegram whenever it changes.
-#   3) Optionally dumps TLS cert + admin macaroon to the logs, so ThunderHub and
+#   3) Streams LND's own payment/channel events to Telegram as notifications.
+#   4) Optionally dumps TLS cert + admin macaroon to the logs, so ThunderHub and
 #      LNbits can be wired up (Railway services cannot share files).
-#   4) Starts LND.
+#   5) Starts LND.
 #
 # Env vars (set in Railway, never in this repo):
 #   WALLET_PASSWORD       required. Unlocks the wallet on every restart.
@@ -14,8 +15,15 @@
 #                         them. Needed after changing tlsextradomain. Remove it
 #                         again straight after, and re-dump PRINT_CREDS.
 #   LND_EXTERNAL_ADDR     "host:port" of the Railway TCP proxy for port 9735.
-#   TELEGRAM_BOT_TOKEN    channel backup destination.
-#   TELEGRAM_CHAT_ID      channel backup destination.
+#   TELEGRAM_BOT_TOKEN    channel backup + notification destination.
+#   TELEGRAM_CHAT_ID      channel backup + notification destination. For a group
+#                         this is NEGATIVE and supergroups carry a -100 prefix,
+#                         e.g. t.me/c/2611800824/... -> -1002611800824.
+#   TELEGRAM_THREAD_ID    optional. Topic id in a forum group - the second
+#                         number in a t.me/c/<chat>/<topic> link. Unset posts to
+#                         the group's General topic.
+#   TELEGRAM_NOTIFY       "0" disables the payment/channel notifications only.
+#                         The channel.backup push is NOT optional and ignores it.
 #   PRINT_CREDS           "1" dumps credentials to the logs once, then remove it.
 
 set -e
@@ -23,6 +31,26 @@ set -e
 LNDDIR=/data
 CHAINDIR="$LNDDIR/data/chain/bitcoin/mainnet"
 SCB="$CHAINDIR/channel.backup"
+# LND's own REST listener. rpclisten/restlisten bind [::], so loopback is [::1].
+REST="https://[::1]:8080"
+
+# Telegram forum groups (groups with Topics on) address a topic with
+# message_thread_id. Without it, messages land in "General" rather than the
+# thread. The parameter must be OMITTED when unused - Telegram rejects an empty
+# value rather than ignoring it, so this builds the argument or an empty string.
+# Unquoted expansion below is deliberate and safe: the id is always numeric.
+TG_DOC_THREAD=""
+TG_MSG_THREAD=""
+if [ -n "$TELEGRAM_THREAD_ID" ]; then
+  TG_DOC_THREAD="-F message_thread_id=$TELEGRAM_THREAD_ID"
+  TG_MSG_THREAD="--data message_thread_id=$TELEGRAM_THREAD_ID"
+fi
+
+to_hex() {
+  hexdump -ve '1/1 "%.2x"' "$1" 2>/dev/null \
+    || xxd -ps -c 100000 "$1" 2>/dev/null | tr -d '\n' \
+    || od -An -tx1 "$1" 2>/dev/null | tr -d ' \n'
+}
 
 # --- 1) Auto-unlock --------------------------------------------------------
 if [ -n "$WALLET_PASSWORD" ]; then
@@ -57,7 +85,7 @@ fi
 tg_send_backup() {
   reason="$1"
   curl -s -o /dev/null -w '[start.sh] telegram HTTP %{http_code}\n' \
-    -F "chat_id=$TELEGRAM_CHAT_ID" \
+    -F "chat_id=$TELEGRAM_CHAT_ID" $TG_DOC_THREAD \
     -F "caption=BitcoinDeepa LND channel.backup ($reason) - $(date -u '+%Y-%m-%d %H:%M UTC')" \
     -F "document=@$SCB;filename=channel.backup" \
     "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument" \
@@ -91,18 +119,110 @@ else
   echo "[start.sh] WARNING: TELEGRAM_* not set, channel backups will NOT be pushed"
 fi
 
+# --- 2b) Payment + channel notifier ---------------------------------------
+# ThunderHub has its own Telegram bot, but it is driven by the `lightning` npm
+# library's gRPC subscriptions, which die against this LND version with
+# ExpectedEventTypeInChannelSubscription ("Initiating subscriptions failed" in
+# the ThunderHub logs). So we read LND's REST event streams here instead:
+# same container, no cert/macaroon plumbing, no version skew.
+tg_notify() {
+  curl -s -o /dev/null -w '[start.sh] telegram notify HTTP %{http_code}\n' \
+    --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" $TG_MSG_THREAD \
+    --data-urlencode "text=$1" \
+    --data "disable_web_page_preview=true" \
+    "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+    || echo "[start.sh] telegram notify failed"
+}
+
+# LND's streaming REST endpoints emit one {"result": ...} JSON object per line
+# and hold the connection open. curl exits whenever LND restarts, is still
+# locked, or the stream breaks, so each watcher reconnects on a loop.
+#
+# --insecure is safe and necessary here: this is a loopback connection inside
+# LND's own container, and tlsdisableautofill means the cert's SANs cover the
+# Railway domains rather than [::1].
+#
+# readonly.macaroon, not admin: these streams only need read permissions, and
+# a compromised notifier should not be able to move funds. It does not exist
+# until the wallet does, which is what the emptiness check below waits for.
+stream_watch() {
+  name="$1"; path="$2"; filter="$3"
+  while true; do
+    mac=$(to_hex "$CHAINDIR/readonly.macaroon" 2>/dev/null || true)
+    if [ -n "$mac" ]; then
+      curl -s --no-buffer --insecure \
+        -H "Grpc-Metadata-macaroon: $mac" \
+        "$REST$path" 2>/dev/null \
+      | while IFS= read -r line; do
+          msg=$(printf '%s' "$line" | jq -r "$filter" 2>/dev/null || true)
+          if [ -n "$msg" ] && [ "$msg" != "null" ]; then
+            echo "[start.sh] notify ($name): $(printf '%s' "$msg" | head -n 1)"
+            tg_notify "$msg"
+          fi
+        done
+    fi
+    sleep 10
+  done
+}
+
+# Invoices. SubscribeInvoices with no add_index/settle_index starts from "now",
+# so a redeploy does not replay old payments. Every invoice hits this twice
+# (OPEN on creation, SETTLED on payment); only the settle is worth a message.
+watch_invoices() {
+  stream_watch invoice /v1/invoices/subscribe '
+    select(.result.state == "SETTLED")
+    | "⚡ Received \(.result.amt_paid_sat) sats"
+      + (if (.result.memo // "") == "" then "" else "\n\(.result.memo)" end)
+  '
+}
+
+# Sends. This is router.TrackPayments, which covers everything leaving the node
+# - ThunderHub, LNbits, and LNbits sub-wallets alike. no_inflight_updates keeps
+# it to one message per payment instead of one per routing attempt.
+watch_payments() {
+  stream_watch payment '/v2/router/payments?no_inflight_updates=true' '
+    if .result.status == "SUCCEEDED" then
+      "✅ Sent \(.result.value_sat) sats (fee \(.result.fee_sat))"
+    elif .result.status == "FAILED" then
+      "❌ Send failed: \(.result.value_sat) sats (\(.result.failure_reason))"
+    else empty end
+  '
+}
+
+# Channels. Only opens and closes - active/inactive fire on every peer
+# reconnect and would drown the chat.
+watch_channels() {
+  stream_watch channel /v1/channels/subscribe '
+    if .result.open_channel then
+      "🔗 Channel OPENED with \(.result.open_channel.remote_pubkey[0:16])…"
+      + "\ncapacity \(.result.open_channel.capacity) sats"
+      + ", local \(.result.open_channel.local_balance) sats"
+    elif .result.closed_channel then
+      "🔒 Channel CLOSED with \(.result.closed_channel.remote_pubkey[0:16])…"
+      + "\n\(.result.closed_channel.close_type), settled \(.result.closed_channel.settled_balance) sats"
+    else empty end
+  '
+}
+
+if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ] \
+   && [ "$TELEGRAM_NOTIFY" != "0" ] && command -v jq >/dev/null 2>&1; then
+  watch_invoices &
+  watch_payments &
+  watch_channels &
+  echo "[start.sh] Telegram notifier started (invoices, payments, channels)"
+  # Doubles as a restart alert and as proof the wiring still works after a
+  # redeploy - the watchers are otherwise silent until something is paid.
+  tg_notify "🟠 BitcoinDeepa node starting - $(date -u '+%Y-%m-%d %H:%M UTC')" &
+elif [ "$TELEGRAM_NOTIFY" = "0" ]; then
+  echo "[start.sh] TELEGRAM_NOTIFY=0, payment notifications disabled"
+fi
+
 # --- 3) Credential dump ----------------------------------------------------
 # Set PRINT_CREDS=1 in Railway, redeploy, copy from the logs, then REMOVE the
 # variable and redeploy again. Only works once the wallet exists.
 if [ "$PRINT_CREDS" = "1" ]; then
   CERT="$LNDDIR/tls.cert"
   MAC="$CHAINDIR/admin.macaroon"
-
-  to_hex() {
-    hexdump -ve '1/1 "%.2x"' "$1" 2>/dev/null \
-      || xxd -ps -c 100000 "$1" 2>/dev/null | tr -d '\n' \
-      || od -An -tx1 "$1" 2>/dev/null | tr -d ' \n'
-  }
 
   echo "========== TLS CERT (hex)  -> LNbits LND_REST_CERT =========="
   to_hex "$CERT" || echo "(tls.cert not found yet)"

@@ -65,7 +65,13 @@ Railway volumes can be grown later but never shrunk.
 | `WALLET_PASSWORD` | the generated wallet password — **this is not the seed, but losing it locks the node until you restore from seed** |
 | `ALLOW_WALLET_CREATE` | `1` — **Phase 1 only, remove in 1.6** |
 | `TELEGRAM_BOT_TOKEN` | your bot token |
-| `TELEGRAM_CHAT_ID` | your chat id |
+| `TELEGRAM_CHAT_ID` | your chat id. For a **group** this is negative, and a supergroup takes a `-100` prefix: a link of `t.me/c/2611800824/23353` means `-1002611800824` |
+| `TELEGRAM_THREAD_ID` | optional. Topic id in a forum group — the second number in that link, `23353`. Leave unset to post in the group's General topic. |
+| `TELEGRAM_NOTIFY` | optional. `0` silences the payment/channel notifications. The `channel.backup` push ignores it and always runs. |
+
+> The bot must be **a member of the group** (and, if the group restricts posting,
+> an admin). A bot cannot message a group it has never been added to — sends fail
+> with `403 Bot is not a member of the group chat` regardless of the ids.
 
 Deploy. The logs should show `wrote walletpassword.txt for auto-unlock` and LND
 waiting on the wallet unlocker.

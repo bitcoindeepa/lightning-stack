@@ -2,9 +2,10 @@
 # Latest stable: https://github.com/lightningnetwork/lnd/releases
 FROM lightninglabs/lnd:v0.21.3-beta
 
-# curl is used by start.sh to push channel.backup to Telegram.
+# curl pushes channel.backup to Telegram and reads LND's REST event streams;
+# jq turns those streams into the notification text.
 USER root
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl jq
 
 # Keep config + start script OUTSIDE /data: Railway's persistent volume mounts
 # at /data and hides anything baked into that path.
