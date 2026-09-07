@@ -52,15 +52,29 @@ lncli --lnddir=/data --rpcserver=[::1]:10009 bakemacaroon \
   invoices:read invoices:write offchain:read offchain:write
 ```
 
-**ThunderHub** — needs channel management, but not `macaroon:generate` (cannot
-mint further macaroons) or `onchain:write` (cannot send your on-chain funds):
+**ThunderHub** — full channel management, including opening and closing.
+LND gates `OpenChannel` / `CloseChannel` on `onchain:write`, the *same*
+permission as `SendCoins`, so there is no macaroon that opens channels but
+cannot sweep the on-chain wallet — granting one grants the other. It still
+withholds `macaroon:generate` (cannot mint further macaroons) and
+`signer:generate` (cannot sign with raw keys). `message:write` is what the
+Amboss login needs — it signs a challenge via `/lnrpc.Lightning/SignMessage`,
+and fails with "Error signing message to login" without it (`signer:generate`
+is a different RPC and does not help):
 
 ```sh
 lncli --lnddir=/data --rpcserver=[::1]:10009 bakemacaroon \
-  info:read onchain:read offchain:read offchain:write \
-  invoices:read invoices:write address:read address:write \
-  peers:read peers:write signer:read
+  info:read peers:read peers:write \
+  onchain:read onchain:write \
+  offchain:read offchain:write \
+  invoices:read invoices:write \
+  address:read address:write \
+  message:read message:write
 ```
+
+If you do not need open/close from the UI, drop `onchain:write` — ThunderHub
+still shows channels, balances, forwards, and fees, and the macaroon can no
+longer move on-chain funds.
 
 Each prints `{ "macaroon": "<hex>" }`. Put the hex in `LND_REST_MACAROON`
 (lnbits) and `LND_MACAROON_HEX` (thunderhub), then redeploy both.
@@ -69,7 +83,10 @@ After swapping both services over, the admin macaroon should exist only on the
 volume — held by no service, pasted into no variable.
 
 Worth being honest about the residual risk: `offchain:write` still lets a
-compromised LNbits *pay invoices*, so channel balance is reachable. It is a
+compromised LNbits *pay invoices*, so channel balance is reachable. And a
+compromised ThunderHub with `onchain:write` can sweep the on-chain wallet and
+force-close channels. Neither macaroon can mint new macaroons, so the admin
+macaroon on the volume stays the only full-access credential. This is a
 reduction in blast radius, not an elimination.
 
 ## 4. What faces the public internet
