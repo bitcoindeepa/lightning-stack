@@ -37,4 +37,42 @@ else
   echo "[start.sh] self-signed cert, then fall back to VoidWallet."
 fi
 
+# Wait for Postgres to actually accept connections before starting LNbits.
+#
+# LNbits does not retry its startup DB connection - one failed attempt is
+# fatal, and it exits. If Postgres restarts at the same time as this
+# container (Railway does this together sometimes), LNbits can lose the race
+# against Postgres's own boot time, burn through Railway's restart budget in
+# seconds (it exits near-instantly, no backoff), and then just stay dead.
+#
+# LNBITS_DATABASE_URL is postgres://user:pass@host:port/db - pull host/port
+# out of it with Python, since it's always present in this image and shell
+# URL-parsing is fragile.
+if [ -n "$LNBITS_DATABASE_URL" ]; then
+  HOST_PORT=$(python3 -c "
+import sys
+from urllib.parse import urlparse
+u = urlparse('$LNBITS_DATABASE_URL'.replace('postgres://', 'postgresql://', 1))
+print(f'{u.hostname} {u.port or 5432}')
+")
+  DB_HOST=$(echo "$HOST_PORT" | cut -d' ' -f1)
+  DB_PORT=$(echo "$HOST_PORT" | cut -d' ' -f2)
+
+  echo "[start.sh] waiting for Postgres at $DB_HOST:$DB_PORT..."
+  i=0
+  until python3 -c "
+import socket
+s = socket.create_connection(('$DB_HOST', $DB_PORT), timeout=2)
+s.close()
+" 2>/dev/null; do
+    i=$((i + 1))
+    if [ "$i" -ge 30 ]; then
+      echo "[start.sh] FATAL: Postgres at $DB_HOST:$DB_PORT not reachable after 60s." >&2
+      exit 1
+    fi
+    sleep 2
+  done
+  echo "[start.sh] Postgres is reachable, starting LNbits"
+fi
+
 exec "$@"
