@@ -3,7 +3,7 @@
 #
 # Configuration comes from Railway environment variables - see .env.example.
 # Nothing secret lives in this image.
-FROM lnbits/lnbits:v1.6.0
+FROM lnbits/lnbits:v1.7.0
 
 # LNbits needs LND's TLS cert as a FILE on disk (it is handed to httpx as a CA
 # bundle path). start.sh materialises it from LND_CERT_BASE64 at boot.
