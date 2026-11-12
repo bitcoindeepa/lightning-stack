@@ -134,6 +134,28 @@ tg_notify() {
     || echo "[start.sh] telegram notify failed"
 }
 
+# The REST gateway marshals every protobuf `bytes` field as base64, so an
+# invoice's r_hash arrives base64-encoded - while LNbits, ThunderHub, explorers
+# and lncli all identify a payment by that hash in HEX. jq cannot do the
+# conversion (decoded hashes are not valid UTF-8, so @base64d corrupts them),
+# so filters emit a {{b64hex:<value>}} token and this expands it.
+#
+# routerrpc's payment_hash is a plain string field and already hex, so only the
+# invoice filter needs this.
+expand_b64hex() {
+  out="$1"
+  while true; do
+    tok=$(printf '%s' "$out" | sed -n 's/.*{{b64hex:\([^}]*\)}}.*/\1/p' | head -n 1)
+    if [ -z "$tok" ]; then break; fi
+    hex=$(printf '%s' "$tok" | base64 -d 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')
+    # A token that will not decode is replaced by a marker rather than left in
+    # place, which would spin this loop forever.
+    if [ -z "$hex" ]; then hex="(undecodable)"; fi
+    out=$(printf '%s' "$out" | sed "s|{{b64hex:$tok}}|$hex|g")
+  done
+  printf '%s' "$out"
+}
+
 # LND's streaming REST endpoints emit one {"result": ...} JSON object per line
 # and hold the connection open. curl exits whenever LND restarts, is still
 # locked, or the stream breaks, so each watcher reconnects on a loop.
@@ -155,6 +177,7 @@ stream_watch() {
         "$REST$path" 2>/dev/null \
       | while IFS= read -r line; do
           msg=$(printf '%s' "$line" | jq -r "$filter" 2>/dev/null || true)
+          case "$msg" in *'{{b64hex:'*) msg=$(expand_b64hex "$msg") ;; esac
           if [ -n "$msg" ] && [ "$msg" != "null" ]; then
             echo "[start.sh] notify ($name): $(printf '%s' "$msg" | head -n 1)"
             tg_notify "$msg"
@@ -173,6 +196,8 @@ watch_invoices() {
     select(.result.state == "SETTLED")
     | "⚡ Received \(.result.amt_paid_sat) sats"
       + (if (.result.memo // "") == "" then "" else "\n\(.result.memo)" end)
+      + (if (.result.r_hash // "") == "" then ""
+         else "\nid: {{b64hex:\(.result.r_hash)}}" end)
   '
 }
 
